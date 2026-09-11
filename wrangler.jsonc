@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wordnest-cloudflare",
+  "compatibility_date": "2026-09-10",
+  "compatibility_flags": ["nodejs_compat"],
+  // `main` here is the entry vinext uses for local dev. Deploys use the
+  // generated config at dist/server/wrangler.json (see the deploy scripts),
+  // which vinext writes during `npm run build` and which merges everything
+  // below this line into the built Worker.
+  "main": "vinext/server/fetch-handler",
+  "assets": {
+    "directory": "dist/client",
+    "not_found_handling": "none",
+    "binding": "ASSETS"
+  },
+  // No database_id: when this Worker is deployed (including from the Cloudflare
+  // dashboard after connecting the GitHub repo) Wrangler creates the D1 database
+  // and binds it automatically. To bind an existing database instead, add its
+  // uuid as "database_id" here.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "wordnest"
+    }
+  ],
+  // Declared so `wrangler types` and local dev warn when the secret is absent.
+  // The value itself is never stored here: set it with
+  // `npx wrangler secret put SESSION_SECRET`, or in the dashboard under
+  // Settings > Variables & Secrets.
+  "secrets": {
+    "required": ["SESSION_SECRET"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  },
+  "vars": {
+    "APP_NAME": "WordNest"
+  }
+}
