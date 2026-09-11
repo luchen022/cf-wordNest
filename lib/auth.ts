@@ -5,7 +5,20 @@ import { getDb, type UserRow } from "./db";
 
 const COOKIE_NAME = "wordnest_session";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
-const PBKDF2_ITERATIONS = 150_000;
+
+/**
+ * PBKDF2 work factor.
+ *
+ * Cloudflare Workers Free allows 10 ms of CPU *per request*, and PBKDF2 is pure
+ * CPU. 150,000 iterations measured ~20 ms on the Workers runtime, which blows
+ * that budget and makes registration fail with an uncatchable CPU-limit error.
+ * 30,000 keeps a single login/registration comfortably inside the free tier.
+ *
+ * The iteration count is stored inside each password hash, so raising this value
+ * later still verifies the passwords created before the change. On the Workers
+ * Paid plan (5 minutes of CPU) this can safely be raised back to 150,000+.
+ */
+const PBKDF2_ITERATIONS = 30_000;
 const KEY_BYTES = 32;
 
 /** Backed-by-ArrayBuffer bytes, which is what the WebCrypto BufferSource types require. */

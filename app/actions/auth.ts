@@ -25,6 +25,18 @@ const MISSING_SECRET =
   "服务端还没有配置 SESSION_SECRET。请在 Cloudflare 控制台的 Worker → Settings → " +
   "Variables and Secrets 中添加一个名为 SESSION_SECRET 的密钥，然后重试。";
 
+/**
+ * Server actions that throw make React surface an opaque
+ * "error in the Server Components render" in production, which hides the cause.
+ * Returning the message keeps failures visible in the UI, and the console output
+ * lands in Workers Logs.
+ */
+function describeFailure(scope: string, error: unknown): AuthState {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error(JSON.stringify({ message: `${scope} failed`, error: message }));
+  return { error: `${scope}失败：${message}` };
+}
+
 async function clientIp(): Promise<string> {
   const store = await headers();
   return store.get("cf-connecting-ip") ?? store.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
@@ -74,64 +86,75 @@ async function clearFailures(key: string): Promise<void> {
 export async function registerAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   if (!authConfigured()) return { error: MISSING_SECRET };
 
-  const username = asString(formData.get("username"), 32);
-  const password = String(formData.get("password") ?? "");
-  const confirm = String(formData.get("confirm") ?? "");
+  try {
+    const username = asString(formData.get("username"), 32);
+    const password = String(formData.get("password") ?? "");
+    const confirm = String(formData.get("confirm") ?? "");
 
-  if (!isValidUsername(username)) {
-    return { error: "用户名需为 3-32 位字母、数字、下划线、点或短横线" };
+    if (!isValidUsername(username)) {
+      return { error: "用户名需为 3-32 位字母、数字、下划线、点或短横线" };
+    }
+    const problem = passwordProblem(password);
+    if (problem) return { error: problem };
+    if (password !== confirm) return { error: "两次输入的密码不一致" };
+
+    // Only the very first account can self-register; it becomes the administrator.
+    // Everyone else is created from the admin console.
+    if ((await countUsers()) > 0) {
+      return { error: "系统已初始化，请让管理员在后台为你创建账号" };
+    }
+
+    const db = await getDb();
+    const passwordHash = await hashPassword(password);
+    const inserted = await db
+      .prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')")
+      .bind(username, passwordHash)
+      .run();
+
+    const userId = Number(inserted.meta.last_row_id);
+    const user = await db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
+    if (user) await ensureUserBootstrap(user);
+
+    await startSession(userId);
+  } catch (error) {
+    return describeFailure("注册", error);
   }
-  const problem = passwordProblem(password);
-  if (problem) return { error: problem };
-  if (password !== confirm) return { error: "两次输入的密码不一致" };
 
-  // Only the very first account can self-register; it becomes the administrator.
-  // Everyone else is created from the admin console.
-  if ((await countUsers()) > 0) {
-    return { error: "系统已初始化，请让管理员在后台为你创建账号" };
-  }
-
-  const db = await getDb();
-  const passwordHash = await hashPassword(password);
-  const inserted = await db
-    .prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')")
-    .bind(username, passwordHash)
-    .run();
-
-  const userId = Number(inserted.meta.last_row_id);
-  const user = await db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
-  if (user) await ensureUserBootstrap(user);
-
-  await startSession(userId);
+  // redirect() throws internally, so it must stay outside the try/catch.
   redirect("/");
 }
 
 export async function loginAction(_prev: AuthState, formData: FormData): Promise<AuthState> {
   if (!authConfigured()) return { error: MISSING_SECRET };
 
-  const username = asString(formData.get("username"), 32);
-  const password = String(formData.get("password") ?? "");
-  if (!username || !password) return { error: "请输入用户名和密码" };
+  try {
+    const username = asString(formData.get("username"), 32);
+    const password = String(formData.get("password") ?? "");
+    if (!username || !password) return { error: "请输入用户名和密码" };
 
-  const key = `${username.toLowerCase()}|${await clientIp()}`;
-  const locked = await lockoutRemaining(key);
-  if (locked > 0) return { error: `尝试次数过多，请在 ${locked} 秒后重试` };
+    const key = `${username.toLowerCase()}|${await clientIp()}`;
+    const locked = await lockoutRemaining(key);
+    if (locked > 0) return { error: `尝试次数过多，请在 ${locked} 秒后重试` };
 
-  const user = await (await getDb())
-    .prepare("SELECT * FROM users WHERE username = ?")
-    .bind(username)
-    .first<UserRow>();
+    const user = await (await getDb())
+      .prepare("SELECT * FROM users WHERE username = ?")
+      .bind(username)
+      .first<UserRow>();
 
-  const passwordOk = user ? await verifyPassword(user.password_hash, password) : false;
-  if (!user || !passwordOk) {
-    await recordFailure(key);
-    return { error: "用户名或密码错误" };
+    const passwordOk = user ? await verifyPassword(user.password_hash, password) : false;
+    if (!user || !passwordOk) {
+      await recordFailure(key);
+      return { error: "用户名或密码错误" };
+    }
+    if (user.status !== "active") return { error: "账号已被禁用，请联系管理员" };
+
+    await clearFailures(key);
+    await ensureUserBootstrap(user);
+    await startSession(user.id);
+  } catch (error) {
+    return describeFailure("登录", error);
   }
-  if (user.status !== "active") return { error: "账号已被禁用，请联系管理员" };
 
-  await clearFailures(key);
-  await ensureUserBootstrap(user);
-  await startSession(user.id);
   redirect("/");
 }
 
