@@ -41,6 +41,7 @@ export function WordManager({ listId, initialWords }: { listId: number; initialW
   const [editor, setEditor] = useState<EditorState | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const visible = useMemo(() => {
     const needle = search.trim().toLowerCase();
@@ -384,56 +385,114 @@ export function WordManager({ listId, initialWords }: { listId: number; initialW
           </p>
         ) : (
           <ul className="divide-y divide-slate-200 dark:divide-slate-800">
-            {visible.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex flex-wrap items-start gap-4 p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50"
-              >
-                <button
-                  type="button"
-                  className="mt-0.5 text-xl leading-none"
-                  title={entry.marked ? "取消标注" : "标注为重点"}
-                  onClick={() => toggleMark(entry)}
+            {visible.map((entry) => {
+              const expanded = expandedId === entry.id;
+              return (
+                <li
+                  key={entry.id}
+                  className="p-4 hover:bg-slate-50 dark:hover:bg-slate-800/50"
                 >
-                  {entry.marked ? "⭐" : "☆"}
-                </button>
+                  <div className="flex flex-wrap items-start gap-4">
+                    <button
+                      type="button"
+                      className="mt-0.5 text-xl leading-none"
+                      title={entry.marked ? "取消标注" : "标注为重点"}
+                      onClick={() => toggleMark(entry)}
+                    >
+                      {entry.marked ? "⭐" : "☆"}
+                    </button>
 
-                <div className="min-w-0 flex-1">
-                  <p className="text-base font-medium">{entry.word}</p>
-                  <div className="mt-1 space-y-1">
-                    {entry.definitions.length === 0 ? (
-                      <p className="text-sm text-slate-400">暂无释义</p>
-                    ) : (
-                      entry.definitions.map((definition) => (
-                        <p key={definition.id} className="text-sm text-slate-600 dark:text-slate-300">
-                          <span className="mr-1.5 text-xs text-indigo-600 dark:text-indigo-400">
-                            {definition.part_of_speech}
-                          </span>
-                          {definition.meaning}
-                        </p>
-                      ))
-                    )}
+                    <div className="min-w-0 flex-1">
+                      <button
+                        type="button"
+                        onClick={() => setExpandedId(expanded ? null : entry.id)}
+                        aria-expanded={expanded}
+                        title={expanded ? "收起详情" : "点击查看例句与笔记"}
+                        className="group flex items-center gap-1.5 text-left"
+                      >
+                        <span className="text-base font-medium group-hover:text-indigo-600 dark:group-hover:text-indigo-400">
+                          {entry.word}
+                        </span>
+                        <span
+                          aria-hidden
+                          className={`text-[0.65rem] text-slate-400 transition-transform ${
+                            expanded ? "rotate-90" : ""
+                          }`}
+                        >
+                          ▶
+                        </span>
+                      </button>
+
+                      <div className="mt-1 space-y-1">
+                        {entry.definitions.length === 0 ? (
+                          <p className="text-sm text-slate-400">暂无释义</p>
+                        ) : (
+                          entry.definitions.map((definition) => (
+                            <p key={definition.id} className="text-sm text-slate-600 dark:text-slate-300">
+                              <span className="mr-1.5 text-xs text-indigo-600 dark:text-indigo-400">
+                                {definition.part_of_speech}
+                              </span>
+                              {definition.meaning}
+                            </p>
+                          ))
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="btn-secondary px-2.5 py-1 text-xs"
+                        onClick={() => openEdit(entry)}
+                      >
+                        编辑
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-danger px-2.5 py-1 text-xs"
+                        onClick={() => remove(entry)}
+                      >
+                        删除
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    className="btn-secondary px-2.5 py-1 text-xs"
-                    onClick={() => openEdit(entry)}
-                  >
-                    编辑
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-danger px-2.5 py-1 text-xs"
-                    onClick={() => remove(entry)}
-                  >
-                    删除
-                  </button>
-                </div>
-              </li>
-            ))}
+                  {expanded ? (
+                    <div className="mt-3 space-y-4 border-l-2 border-indigo-200 pl-4 dark:border-indigo-900">
+                      {entry.definitions.length === 0 ? (
+                        <p className="text-sm text-slate-500 dark:text-slate-400">
+                          这个单词还没有内容，点「编辑」补充释义、例句或笔记。
+                        </p>
+                      ) : (
+                        entry.definitions.map((definition) => (
+                          <div key={definition.id} className="space-y-1.5">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="chip bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300">
+                                {definition.part_of_speech}
+                              </span>
+                              <span className="text-sm font-medium">{definition.meaning}</span>
+                            </div>
+                            {definition.example ? (
+                              <p className="whitespace-pre-line text-sm text-slate-600 dark:text-slate-300">
+                                {definition.example}
+                              </p>
+                            ) : null}
+                            {definition.note ? (
+                              <p className="text-sm text-slate-500 dark:text-slate-400">
+                                💡 {definition.note}
+                              </p>
+                            ) : null}
+                            {!definition.example && !definition.note ? (
+                              <p className="text-xs text-slate-400">暂无例句与笔记</p>
+                            ) : null}
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                </li>
+              );
+            })}
           </ul>
         )}
       </div>
