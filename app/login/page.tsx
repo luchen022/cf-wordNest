@@ -14,7 +14,7 @@ export default async function LoginPage() {
 
   return (
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-50 via-slate-50 to-white px-4 py-10 dark:from-slate-950 dark:via-slate-950 dark:to-indigo-950">
-      <div className="w-full">
+      <div className="mx-auto w-full max-w-md">
         {configured ? null : (
           <div className="mx-auto mb-4 max-w-md rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
             <p className="font-medium">还差一步配置</p>
