@@ -160,8 +160,8 @@ export async function POST(request: NextRequest) {
             if (!payload || payload === "[DONE]") continue;
 
             try {
-              const parsed = JSON.parse(payload) as { choices?: Array<{ delta?: { content?: string } }> };
-              const delta = parsed.choices?.[0]?.delta?.content;
+              const parsed = JSON.parse(payload) as { response?: string; choices?: Array<{ delta?: { content?: string } }> };
+              const delta = parsed.choices?.[0]?.delta?.content ?? parsed.response;
               if (typeof delta === "string" && delta) {
                 assistantText += delta;
                 send({ content: delta });

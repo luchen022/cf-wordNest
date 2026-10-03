@@ -16,6 +16,7 @@
   // Keep dashboard-managed text/JSON variables during automatic deployments.
   // Secrets are preserved by Wrangler independently of this setting.
   "keep_vars": true,
+  "ai": { "binding": "AI" },
   // Declare only the binding name: reuse whichever D1 is bound as DB in the
   // dashboard. Deployment scripts convert this local declaration into an
   // explicit inherited binding and disable all resource provisioning.

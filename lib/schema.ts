@@ -99,6 +99,12 @@ const MIGRATIONS: readonly (readonly string[])[] = [
        blocked_until INTEGER NOT NULL DEFAULT 0
      )`,
   ],
+  [
+    `CREATE TABLE IF NOT EXISTS user_ai_providers (
+       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+       provider TEXT NOT NULL CHECK (provider IN ('workers', 'custom'))
+     )`,
+  ],
 ];
 
 /** Cached per isolate so the version lookup runs once per Worker instance. */

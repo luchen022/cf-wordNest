@@ -37,7 +37,7 @@ async function harness() {
   const env = { DB: db, SESSION_SECRET: 'test-only-secret' };
   const cookieValues = new Map();
   const context = vm.createContext({ crypto, TextEncoder, TextDecoder, btoa, atob, URL, Headers, Response,
-    AbortSignal, console: { error() {} }, fetch: (...args) => context.mockFetch(...args) });
+    AbortSignal, ReadableStream, console: { error() {} }, fetch: (...args) => context.mockFetch(...args) });
   const stubs = {
     'cloudflare:workers': { env },
     'next/headers': { cookies: async () => ({ get: (key) => cookieValues.get(key), set: (key, value) => cookieValues.set(key, { value }), delete: (key) => cookieValues.delete(key) }), headers: async () => new Headers({ host: 'localhost' }) },
@@ -206,4 +206,57 @@ test('signed future and expired sessions are rejected', async () => {
   const token = await h.auth.createSessionToken(1);
   h.context.Date = { now: () => now + 31 * 24 * 60 * 60 * 1000 };
   assert.equal(await h.auth.verifySessionToken(token), null);
+});
+
+
+test('login submits only one password and setup cannot run after initialization', async () => {
+  const h = await harness();
+  h.sql.prepare('UPDATE users SET password_hash = ? WHERE id = 1').run(await h.auth.hashPassword('test-password'));
+  const form = new FormData();
+  form.set('intent', 'login'); form.set('username', 'admin'); form.set('password', 'test-password');
+  await assert.rejects(h.registration.authenticateAction({}, form), /REDIRECT/);
+  assert.equal((await h.auth.getCurrentUser()).id, 1);
+  form.set('intent', 'register');
+  assert.match((await h.registration.authenticateAction({}, form)).error, /系统已初始化/);
+  form.set('intent', 'unexpected');
+  assert.match((await h.registration.authenticateAction({}, form)).error, /刷新/);
+});
+
+test('built-in AI is default and selecting it preserves custom credentials per user', async () => {
+  const h = await harness();
+  assert.equal((await h.ai.getAiConfig(1)).provider, 'workers');
+  assert.equal((await h.settings.saveAiSettingsAction({ baseUrl: 'https://example.com', model: 'custom-model', apiKey: 'secret' })).ok, true);
+  assert.equal(await h.ai.getAiProvider(1), 'custom');
+  const saved = h.sql.prepare('SELECT api_key FROM user_ai_settings WHERE user_id = 1').get().api_key;
+  assert.equal((await h.settings.saveAiSettingsAction({ provider: 'workers', baseUrl: '', model: '', apiKey: '' })).ok, true);
+  assert.equal((await h.ai.getAiConfig(1)).provider, 'workers');
+  assert.equal(h.sql.prepare('SELECT api_key FROM user_ai_settings WHERE user_id = 1').get().api_key, saved);
+  assert.equal((await h.settings.saveAiSettingsAction({ provider: 'custom', baseUrl: 'https://example.com', model: 'custom-model', apiKey: 's******' })).ok, true);
+  assert.equal((await h.ai.getAiConfig(1)).apiKey, 'secret');
+  h.sql.exec("INSERT INTO users (username, password_hash) VALUES ('another', 'hash')");
+  assert.equal(await h.ai.getAiProvider(2), 'workers');
+});
+
+test('Workers AI uses the binding for JSON and streaming, with no external fallback', async () => {
+  const h = await harness();
+  const config = h.ai.workersAiConfig();
+  await assert.rejects(h.ai.chatCompletion(config, []), /尚未连接/);
+  let calls = 0;
+  h.context.mockFetch = () => { throw new Error('external provider must not run'); };
+  h.env.AI = { async run(model, input, options) {
+    calls++;
+    assert.equal(model, '@cf/qwen/qwen3-30b-a3b-fp8');
+    assert.ok(options.signal);
+    if (input.stream) return new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"OK"}}]}\n\n')); controller.close(); } });
+    assert.equal(input.response_format.type, 'json_object');
+    return { choices: [{ message: { content: '{"ok":true}' } }] };
+  } };
+  assert.equal(await h.ai.chatCompletion(config, [], { json: true }), '{"ok":true}');
+  assert.match(await (await h.ai.chatCompletionStream(config, [])).text(), /OK/);
+  assert.equal(calls, 2);
+  const abort = new AbortController(); abort.abort();
+  await assert.rejects(h.ai.chatCompletion(config, [], { signal: abort.signal }));
+  assert.equal(calls, 2);
+  h.env.AI.run = async () => { throw new Error('quota exceeded secret detail'); };
+  await assert.rejects(h.ai.chatCompletion(config, []), /额度已用完/);
 });

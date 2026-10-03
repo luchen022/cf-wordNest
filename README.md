@@ -184,3 +184,19 @@ lib/                数据访问、认证、AI 客户端、校验
 - AI Key 使用 AES-GCM 加密后存入 D1，加密密钥由 `SESSION_SECRET` 派生，密文绑定用户 ID。历史明文密钥在读取或保存设置时自动升级。
 - 请妥善备份 `SESSION_SECRET`。更换它会使所有会话失效，已有加密 AI Key 也将无法解密，需要用户重新填写；更换前应规划密钥重新录入。
 - `npm test`（需要 Node.js 22.13+ 或 24）执行回归测试，覆盖会话撤销、初始化竞争、保存回滚、密钥保护和 AI 地址校验。数据库测试使用 SQLite，不能替代部署环境的端到端验证。
+
+
+### Cloudflare 内置 AI
+
+部署配置已声明名为 `AI` 的 Workers AI 绑定，无需 API Key、账户 ID 或数据库 ID。
+新账号默认使用内置 Qwen3；已配置自有接口的账号保留原选择。
+在「设置 → AI 服务」中选择 Cloudflare 内置 AI 并保存，即可用于单词补全、例句、图谱和助教对话。
+可以切回自有接口，原密钥会保留。内置服务失败时不会自动调用自有接口。
+
+所有网站账号共享所属 Cloudflare 账户的 Workers AI 额度，不设置单独的每日次数限制。
+[Cloudflare 定价](https://developers.cloudflare.com/workers-ai/platform/pricing/)规定每天提供 10,000 Neurons 免费额度，
+每日 UTC 00:00（北京时间 08:00）重置。Workers Free 超额后调用失败；Workers Paid 超额部分会计费。
+如只希望使用免费额度，请保持 Workers Free 计划。测试连接也消耗实际推理额度。
+
+如果线上提示未连接，请在 Worker 的 Bindings 中添加 Workers AI，变量名填写 `AI`。
+D1 仍由你手动创建并绑定为 `DB`，部署脚本不会自动创建数据库。

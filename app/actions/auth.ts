@@ -87,6 +87,12 @@ export async function registerAction(_prev: AuthState, formData: FormData): Prom
   if (!authConfigured()) return { error: MISSING_SECRET };
 
   try {
+    // Only the very first account can self-register; it becomes the administrator.
+    // Everyone else is created from the admin console.
+    if ((await countUsers()) > 0) {
+      return { error: "系统已初始化，请让管理员在后台为你创建账号" };
+    }
+
     const username = asString(formData.get("username"), 32);
     const password = String(formData.get("password") ?? "");
     const confirm = String(formData.get("confirm") ?? "");
@@ -97,12 +103,6 @@ export async function registerAction(_prev: AuthState, formData: FormData): Prom
     const problem = passwordProblem(password);
     if (problem) return { error: problem };
     if (password !== confirm) return { error: "两次输入的密码不一致" };
-
-    // Only the very first account can self-register; it becomes the administrator.
-    // Everyone else is created from the admin console.
-    if ((await countUsers()) > 0) {
-      return { error: "系统已初始化，请让管理员在后台为你创建账号" };
-    }
 
     const db = await getDb();
     const passwordHash = await hashPassword(password);
@@ -164,4 +164,12 @@ export async function loginAction(_prev: AuthState, formData: FormData): Promise
 export async function logoutAction(): Promise<void> {
   await endSession();
   redirect("/login");
+}
+
+/** One stable action keeps login and first-account setup submissions distinct. */
+export async function authenticateAction(prev: AuthState, formData: FormData): Promise<AuthState> {
+  const intent = formData.get("intent");
+  if (intent === "login") return loginAction(prev, formData);
+  if (intent === "register") return registerAction(prev, formData);
+  return { error: "页面已更新，请刷新后重新登录" };
 }

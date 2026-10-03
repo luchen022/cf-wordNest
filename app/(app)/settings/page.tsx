@@ -2,7 +2,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { requireUser } from "@/lib/auth";
 import { getDb, type AiSettingsRow } from "@/lib/db";
 import { ensureUserBootstrap, getListsWithCounts } from "@/lib/lists";
-import { getAiConfig, maskApiKey } from "@/lib/ai";
+import { getCustomAiConfig, getAiProvider, maskApiKey } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +12,7 @@ export default async function SettingsPage() {
   const [lists, settings] = await Promise.all([
     getListsWithCounts(user.id),
     (async () => {
-      try { return { config: await getAiConfig(user.id), error: "" }; }
+      try { return { config: await getCustomAiConfig(user.id), error: "" }; }
       catch {
         const row = await (await getDb()).prepare("SELECT * FROM user_ai_settings WHERE user_id = ?")
           .bind(user.id).first<AiSettingsRow>();
@@ -37,6 +37,7 @@ export default async function SettingsPage() {
 
       <SettingsPanel
         initial={{
+          provider: await getAiProvider(user.id),
           baseUrl: settings.config?.baseUrl ?? "https://api.deepseek.com",
           model: settings.config?.model ?? "deepseek-chat",
           apiKeyMasked: maskApiKey(settings.config?.apiKey ?? ""),

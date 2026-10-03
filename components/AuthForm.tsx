@@ -1,14 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
-import { loginAction, registerAction, type AuthState } from "@/app/actions/auth";
+import { useActionState } from "react";
+import { authenticateAction, type AuthState } from "@/app/actions/auth";
 
 const initialState: AuthState = {};
 
 export function AuthForm({ setupMode }: { setupMode: boolean }) {
-  const [mode, setMode] = useState<"login" | "register">(setupMode ? "register" : "login");
-  const action = mode === "login" ? loginAction : registerAction;
-  const [state, formAction, isPending] = useActionState(action, initialState);
+  const mode = setupMode ? "register" : "login";
+  const [state, formAction, isPending] = useActionState(authenticateAction, initialState);
 
   return (
     <div className="w-full max-w-md">
@@ -31,6 +30,7 @@ export function AuthForm({ setupMode }: { setupMode: boolean }) {
         </p>
 
         <form action={formAction} className="mt-6 space-y-4">
+          <input type="hidden" name="intent" value={mode} />
           <div>
             <label className="label" htmlFor="username">
               用户名
@@ -87,15 +87,7 @@ export function AuthForm({ setupMode }: { setupMode: boolean }) {
           </button>
         </form>
 
-        {setupMode ? null : (
-          <button
-            type="button"
-            className="mt-4 w-full text-center text-sm text-slate-500 hover:text-indigo-600 dark:text-slate-400"
-            onClick={() => setMode(mode === "login" ? "register" : "login")}
-          >
-            {mode === "login" ? "还没有账号？" : "已有账号？返回登录"}
-          </button>
-        )}
+
       </div>
 
       <p className="mt-6 text-center text-xs text-slate-400">

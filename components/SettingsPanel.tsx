@@ -12,6 +12,7 @@ interface ListSummary {
 }
 
 interface AiSettings {
+  provider: "workers" | "custom";
   baseUrl: string;
   model: string;
   apiKeyMasked: string;
@@ -31,6 +32,7 @@ export function SettingsPanel({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [provider, setProvider] = useState(initial.provider);
   const [baseUrl, setBaseUrl] = useState(initial.baseUrl);
   const [model, setModel] = useState(initial.model);
   const [apiKey, setApiKey] = useState(initial.apiKeyMasked);
@@ -43,7 +45,7 @@ export function SettingsPanel({
   async function saveAi() {
     setAiBusy(true);
     setAiMessage(null);
-    const result = await saveAiSettingsAction({ baseUrl, model, apiKey });
+    const result = await saveAiSettingsAction({ provider, baseUrl, model, apiKey });
     setAiBusy(false);
     setAiMessage(
       result.ok
@@ -56,7 +58,7 @@ export function SettingsPanel({
   async function testAi() {
     setAiBusy(true);
     setAiMessage(null);
-    const result = await testAiConnectionAction({ baseUrl, model, apiKey });
+    const result = await testAiConnectionAction({ provider, baseUrl, model, apiKey });
     setAiBusy(false);
     setAiMessage(
       result.ok
@@ -117,9 +119,22 @@ export function SettingsPanel({
       <section className="card p-6">
         <h2 className="text-lg font-semibold">AI 模型配置</h2>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          填入你自己的 OpenAI 兼容接口。密钥仅保存在你自己的账号下，界面只显示掩码。
+          可以使用 Cloudflare 内置 AI，也可以配置自己的模型接口。
         </p>
 
+        <div className="mt-5">
+          <label className="label" htmlFor="ai-provider">AI 服务</label>
+          <select id="ai-provider" className="field" value={provider} onChange={(event) => setProvider(event.target.value as "workers" | "custom")}>
+            <option value="workers">Cloudflare 内置 AI（Qwen3）</option>
+            <option value="custom">自己的模型接口</option>
+          </select>
+        </div>
+        {provider === "workers" ? (
+          <p className="mt-4 text-sm text-slate-500 dark:text-slate-400">
+            无需 API Key。所有账号共享站点的 Cloudflare 额度，不设账号次数限制。
+            免费计划用完当日额度后暂停服务，每天北京时间 08:00 重置；付费计划超出免费额度后会计费。
+          </p>
+        ) : (
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2">
             <label className="label" htmlFor="base-url">
@@ -167,6 +182,8 @@ export function SettingsPanel({
             ) : null}
           </div>
         </div>
+
+        )}
 
         {aiMessage ? (
           <p

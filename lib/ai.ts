@@ -1,7 +1,9 @@
+import { env } from "cloudflare:workers";
 import { getDb, type AiSettingsRow } from "./db";
 import { decryptCredential, encryptCredential, isEncryptedCredential } from "./credentials";
 
 export interface AiConfig {
+  provider?: "workers" | "custom";
   baseUrl: string;
   model: string;
   apiKey: string;
@@ -29,7 +31,7 @@ export function buildChatCompletionsUrl(baseUrl: string): string {
   return url.toString();
 }
 
-export async function getAiConfig(userId: number): Promise<AiConfig | null> {
+export async function getCustomAiConfig(userId: number): Promise<AiConfig | null> {
   const row = await (await getDb())
     .prepare("SELECT * FROM user_ai_settings WHERE user_id = ?")
     .bind(userId)
@@ -43,6 +45,46 @@ export async function getAiConfig(userId: number): Promise<AiConfig | null> {
       .bind(await encryptCredential(apiKey, userId), userId, row.api_key).run();
   }
   return { baseUrl: row.base_url, model: row.model, apiKey };
+}
+
+export function workersAiConfig(): AiConfig {
+  return { provider: "workers", baseUrl: "", model: "@cf/qwen/qwen3-30b-a3b-fp8", apiKey: "" };
+}
+
+export async function getAiProvider(userId: number): Promise<"workers" | "custom"> {
+  const db = await getDb();
+  const selected = await db.prepare("SELECT provider FROM user_ai_providers WHERE user_id = ?")
+    .bind(userId).first<{ provider: "workers" | "custom" }>();
+  if (selected) return selected.provider;
+  // Preserve existing configurations; accounts without one use the built-in AI.
+  const existing = await db.prepare("SELECT user_id FROM user_ai_settings WHERE user_id = ?")
+    .bind(userId).first();
+  return existing ? "custom" : "workers";
+}
+
+export async function getAiConfig(userId: number): Promise<AiConfig | null> {
+  return await getAiProvider(userId) === "workers" ? workersAiConfig() : getCustomAiConfig(userId);
+}
+
+async function runWorkersAi(config: AiConfig, messages: ChatMessage[], options: CompletionOptions, stream: boolean) {
+  if (!env.AI) throw new Error("内置 AI 尚未连接，请管理员在 Cloudflare 为 Worker 添加名为 AI 的 Workers AI 绑定");
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, AbortSignal.timeout(stream ? 180_000 : 60_000)])
+    : AbortSignal.timeout(stream ? 180_000 : 60_000);
+  signal.throwIfAborted();
+  try {
+    return await env.AI.run(config.model, {
+      messages,
+      temperature: options.temperature ?? 0.3,
+      max_tokens: options.maxTokens ?? 2048,
+      stream,
+      ...(options.json ? { response_format: { type: "json_object" } } : {}),
+    }, { signal });
+  } catch {
+    if (signal.aborted) throw signal.reason;
+    // Never fall back to a different provider or expose raw provider internals.
+    throw new Error("Cloudflare 内置 AI 暂不可用，可能是额度已用完或服务繁忙，请稍后重试");
+  }
 }
 
 function headers(config: AiConfig): HeadersInit {
@@ -67,6 +109,14 @@ export async function chatCompletion(
   messages: ChatMessage[],
   options: CompletionOptions = {},
 ): Promise<string> {
+  if (config.provider === "workers") {
+    const payload = await runWorkersAi(config, messages, options, false) as {
+      response?: string; choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = payload.choices?.[0]?.message?.content ?? payload.response;
+    if (typeof content !== "string" || !content) throw new Error("模型返回内容为空");
+    return content;
+  }
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
@@ -104,6 +154,11 @@ export async function chatCompletionStream(
   messages: ChatMessage[],
   options: { temperature?: number; signal?: AbortSignal } = {},
 ): Promise<Response> {
+  if (config.provider === "workers") {
+    const stream = await runWorkersAi(config, messages, options, true);
+    if (!(stream instanceof ReadableStream)) throw new Error("内置 AI 未返回对话流");
+    return new Response(stream, { headers: { "Content-Type": "text/event-stream" } });
+  }
   const response = await fetch(buildChatCompletionsUrl(config.baseUrl), {
     method: "POST",
     headers: headers(config),
