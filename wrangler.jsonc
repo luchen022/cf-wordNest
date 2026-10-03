@@ -17,7 +17,8 @@
   // Secrets are preserved by Wrangler independently of this setting.
   "keep_vars": true,
   // Declare only the binding name: reuse whichever D1 is bound as DB in the
-  // dashboard. If none exists, Wrangler can auto-provision one on first deploy.
+  // dashboard. Deployment scripts convert this local declaration into an
+  // explicit inherited binding and disable all resource provisioning.
   // Do not pin database_name/database_id for this dashboard-managed workflow.
   "d1_databases": [
     {

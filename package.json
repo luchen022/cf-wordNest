@@ -29,12 +29,12 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json --persist-to \"$PWD/.wrangler/state\"",
     "deploy": "npm run build && npm run deploy:ci",
-    "deploy:ci": "wrangler deploy --config dist/server/wrangler.json",
-    "deploy:preview": "wrangler versions upload --config dist/server/wrangler.json",
+    "deploy:ci": "node scripts/deploy.mjs",
+    "deploy:preview": "node scripts/deploy.mjs --preview",
     "typecheck": "tsc --noEmit",
     "test": "node --experimental-vm-modules --test --test-isolation=none tests/*.test.mjs",
     "types": "wrangler types --env-file .dev.vars.example",
-    "deploy:check": "wrangler deploy --config dist/server/wrangler.json --dry-run"
+    "deploy:check": "node scripts/deploy.mjs --dry-run"
   },
   "engines": {
     "node": ">=24"

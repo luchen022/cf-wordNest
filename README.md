@@ -51,11 +51,11 @@ npm run start                    # http://localhost:8787
 
 ## 部署：GitHub → Cloudflare Workers → 自动更新
 
-这个项目使用 **Workers Builds** 连接 GitHub。第一次配置完成后，推送到生产分支就会自动构建和部署；无需本地登录 Cloudflare、执行建库命令或手动迁移。
+这个项目使用 **Workers Builds** 连接 GitHub。第一次配置完成后，推送到生产分支就会自动构建和部署；数据库在控制台自行创建；无需在本地登录 Cloudflare 或执行建表命令。
 
 ### 1. 连接 GitHub 仓库
 
-把代码上传到 GitHub，在 Cloudflare 控制台进入 **Workers & Pages → Create application → Import a repository**，授权并选择仓库，填写：
+把代码上传到 GitHub，先创建 Worker 和 D1，并按下一节完成 `DB` 绑定。在 **该 Worker → Settings → Builds** 连接 GitHub 仓库，填写：
 
 | 配置项 | 值 |
 | --- | --- |
@@ -67,9 +67,9 @@ npm run start                    # http://localhost:8787
 | Build variables / secrets | 无需填写 `SESSION_SECRET`，它是运行时密钥 |
 | Node.js | 仓库中的 `.node-version` 已指定为 `24` |
 
-保留自动部署生产分支的设置。初次部署可以先完成，尚未配置 `SESSION_SECRET` 时应用会显示配置提示。
+保留自动部署生产分支的设置。部署前必须先在该 Worker 绑定你自己创建的 D1，变量名为 `DB`。尚未配置 `SESSION_SECRET` 时应用会显示配置提示。
 
-部署必须使用生成的 `dist/server/wrangler.json`，`deploy:ci` 已明确指定它。不要直接部署开发入口，也不要把部署命令换成其他框架的适配器命令。
+`deploy:ci` 通过 `scripts/deploy.mjs` 读取构建生成的 `dist/server/wrangler.json`，生成只继承已有 D1 绑定的部署配置。保持部署命令为 `npm run deploy:ci`；直接使用裸 `wrangler deploy` 会绕过禁止建库的处理。
 
 ### 2. 在控制台选择 D1 数据库，无需填写 ID
 
@@ -87,7 +87,11 @@ npm run start                    # http://localhost:8787
 
 如果 Worker 已有 `DB` 绑定，后续 GitHub 自动部署会沿用这个绑定。仓库没有固定数据库名称或 ID，不需要把控制台的数据库 ID 复制回代码。
 
-也可以让 Wrangler 在首次部署时自动创建 D1：没有已有 `DB` 绑定时，自动配置通常会使用 `wordnest-cloudflare-DB` 作为数据库名称。这个方式要求构建部署令牌具备 **D1 编辑权限**。如果构建日志提示无权查询或创建 D1，请在控制台给构建令牌补充权限，或先在控制台创建数据库并绑定为 `DB`，再重试部署。
+**不会自动创建数据库。** 部署脚本把构建中的 D1 声明转换为继承已有 `DB` 绑定，并关闭 Wrangler 资源自动创建。没有已有 `DB` 绑定时，部署会报错，不会新建数据库。
+
+新项目请先在控制台创建 Worker（可以使用 Hello World 占位），自己创建或导入 D1 数据库，在这个 Worker 的 Bindings 中绑定为 `DB` 并保存/部署绑定，再通过该 Worker 的 Settings → Builds 连接 GitHub。已有 Worker 则直接更换 `DB` 绑定到你自己选择的数据库。
+
+数据库可以任意命名，不需要把数据库 ID 写回仓库；迁移时在控制台导入数据后，将 `DB` 改绑到目标数据库即可。
 
 应用在首次访问数据库时自动创建表；以后沿用同一个数据库，常规代码更新不会重建数据库或清空词表。
 
@@ -113,7 +117,7 @@ npm run start                    # http://localhost:8787
 
 在 **Worker → Builds** 查看每次构建状态和失败日志，在 **Deployments** 查看生产部署版本。
 
-建议初期只启用生产分支构建。现有 `npm run deploy:preview` 使用 `wrangler versions upload`，是版本预览，沿用 Worker 的数据库绑定，并不创建隔离的测试数据库。如果需要测试环境，应另建 Worker/D1 后再启用。
+建议初期只启用生产分支构建。现有 `npm run deploy:preview` 同样禁止自动建库，使用 `wrangler versions upload`，是版本预览，沿用 Worker 的数据库绑定，并不创建隔离的测试数据库。如果需要测试环境，应另建 Worker/D1 后再启用。
 
 ### 可选：本地手动部署与验证
 
@@ -131,7 +135,7 @@ npm run deploy:check
 
 检查不代表账号权限、线上 D1 绑定和运行时 Secret 已配置正确。
 
-相关官方说明：[Workers Builds 配置](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)、[自动创建资源](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)、[控制台绑定 D1](https://developers.cloudflare.com/d1/get-started/#3-bind-your-worker-to-your-d1-database)。
+相关官方说明：[Workers Builds 配置](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)、[控制台绑定 D1](https://developers.cloudflare.com/d1/get-started/#3-bind-your-worker-to-your-d1-database)。
 
 ## 脚本
 
@@ -141,7 +145,7 @@ npm run deploy:check
 | `npm run build` | 构建 Worker 产物到 `dist/` |
 | `npm run start` | 用本地 D1 预览构建产物 |
 | `npm run deploy` | 构建并部署到 Cloudflare Workers |
-| `npm run deploy:ci` | 仅部署构建产物（Workers Builds 的 Deploy command 用这个） |
+| `npm run deploy:ci` | 部署构建产物，继承已有 DB，禁止自动建库 |
 | `npm run deploy:preview` | 上传预览版本（非生产分支用） |
 | `npm run typecheck` | TypeScript 类型检查 |
 | `npm run types` | 根据 Wrangler 配置生成绑定类型 |
