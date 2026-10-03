@@ -58,7 +58,11 @@ export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "未登录" }, { status: 401 });
 
-  const config = await getAiConfig(user.id);
+  let config;
+  try { config = await getAiConfig(user.id); }
+  catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "读取 AI 配置失败" }, { status: 400 });
+  }
   if (!config) {
     return Response.json(
       { error: "请先在设置中配置你自己的模型接口（Base URL / 模型 / API Key）" },
@@ -104,9 +108,12 @@ export async function POST(request: NextRequest) {
     ...history.reverse().map((row) => ({ role: row.role, content: row.content })),
   ];
 
+  const upstreamAbort = new AbortController();
   let upstream: Response;
   try {
-    upstream = await chatCompletionStream(config, messages);
+    upstream = await chatCompletionStream(config, messages, {
+      signal: AbortSignal.any([request.signal, upstreamAbort.signal]),
+    });
   } catch (error) {
     const detail = error instanceof Error ? error.message : "调用模型失败";
     console.error(JSON.stringify({ message: "tutor stream failed", error: detail }));
@@ -121,10 +128,17 @@ export async function POST(request: NextRequest) {
   let assistantText = "";
   let buffer = "";
 
+  let cancelled = false;
+  const reader = upstreamBody.getReader();
   const stream = new ReadableStream<Uint8Array>({
+    async cancel() {
+      cancelled = true;
+      upstreamAbort.abort();
+      await reader.cancel().catch(() => {});
+    },
     async start(controller) {
-      const reader = upstreamBody.getReader();
       const send = (payload: unknown) => {
+        if (cancelled) return;
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
       };
 
@@ -161,7 +175,7 @@ export async function POST(request: NextRequest) {
         send({ error: error instanceof Error ? error.message : "流式响应中断" });
       } finally {
         send({ done: true });
-        controller.close();
+        if (!cancelled) controller.close();
         reader.releaseLock();
       }
     },

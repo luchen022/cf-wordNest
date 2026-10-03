@@ -2,7 +2,7 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { requireUser } from "@/lib/auth";
 import { getDb, type AiSettingsRow } from "@/lib/db";
 import { ensureUserBootstrap, getListsWithCounts } from "@/lib/lists";
-import { maskApiKey } from "@/lib/ai";
+import { getAiConfig, maskApiKey } from "@/lib/ai";
 
 export const dynamic = "force-dynamic";
 
@@ -11,7 +11,17 @@ export default async function SettingsPage() {
   const currentList = await ensureUserBootstrap(user);
   const [lists, settings] = await Promise.all([
     getListsWithCounts(user.id),
-    await (await getDb()).prepare("SELECT * FROM user_ai_settings WHERE user_id = ?").bind(user.id).first<AiSettingsRow>(),
+    (async () => {
+      try { return { config: await getAiConfig(user.id), error: "" }; }
+      catch {
+        const row = await (await getDb()).prepare("SELECT * FROM user_ai_settings WHERE user_id = ?")
+          .bind(user.id).first<AiSettingsRow>();
+        return {
+          config: row ? { baseUrl: row.base_url, model: row.model, apiKey: "" } : null,
+          error: "无法解密已保存的 AI 密钥，请重新填写并保存密钥。",
+        };
+      }
+    })(),
   ]);
 
   return (
@@ -23,12 +33,14 @@ export default async function SettingsPage() {
         </p>
       </div>
 
+      {settings.error ? <p role="alert" className="text-sm text-red-600">{settings.error}</p> : null}
+
       <SettingsPanel
         initial={{
-          baseUrl: settings?.base_url ?? "https://api.deepseek.com",
-          model: settings?.model ?? "deepseek-chat",
-          apiKeyMasked: maskApiKey(settings?.api_key ?? ""),
-          hasApiKey: Boolean(settings?.api_key),
+          baseUrl: settings.config?.baseUrl ?? "https://api.deepseek.com",
+          model: settings.config?.model ?? "deepseek-chat",
+          apiKeyMasked: maskApiKey(settings.config?.apiKey ?? ""),
+          hasApiKey: Boolean(settings.config?.apiKey),
         }}
         lists={lists}
         currentListId={currentList.id}

@@ -1,0 +1,3 @@
+# Copy to .dev.vars for local development, then replace with a random value.
+# Generate one with: openssl rand -hex 32
+SESSION_SECRET=replace-me-with-a-random-32-byte-hex-string

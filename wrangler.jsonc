@@ -13,23 +13,20 @@
     "not_found_handling": "none",
     "binding": "ASSETS"
   },
-  // No database_id: when this Worker is deployed (including from the Cloudflare
-  // dashboard after connecting the GitHub repo) Wrangler creates the D1 database
-  // and binds it automatically. To bind an existing database instead, add its
-  // uuid as "database_id" here.
+  // Keep dashboard-managed text/JSON variables during automatic deployments.
+  // Secrets are preserved by Wrangler independently of this setting.
+  "keep_vars": true,
+  // Declare only the binding name: reuse whichever D1 is bound as DB in the
+  // dashboard. If none exists, Wrangler can auto-provision one on first deploy.
+  // Do not pin database_name/database_id for this dashboard-managed workflow.
   "d1_databases": [
     {
-      "binding": "DB",
-      "database_name": "wordnest"
+      "binding": "DB"
     }
   ],
-  // Declared so `wrangler types` and local dev warn when the secret is absent.
-  // The value itself is never stored here: set it with
-  // `npx wrangler secret put SESSION_SECRET`, or in the dashboard under
-  // Settings > Variables & Secrets.
-  "secrets": {
-    "required": ["SESSION_SECRET"]
-  },
+  // SESSION_SECRET is configured as a runtime Secret in the dashboard.
+  // Deliberately omit secrets.required so the first deploy can succeed before
+  // the Worker exists. The login page explains the missing secret at runtime.
   "observability": {
     "enabled": true,
     "logs": {

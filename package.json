@@ -28,9 +28,15 @@
     "dev": "vinext dev",
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json --persist-to \"$PWD/.wrangler/state\"",
-    "deploy": "vinext-cloudflare deploy --config dist/server/wrangler.json",
+    "deploy": "npm run build && npm run deploy:ci",
     "deploy:ci": "wrangler deploy --config dist/server/wrangler.json",
     "deploy:preview": "wrangler versions upload --config dist/server/wrangler.json",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-vm-modules --test --test-isolation=none tests/*.test.mjs",
+    "types": "wrangler types --env-file .dev.vars.example",
+    "deploy:check": "wrangler deploy --config dist/server/wrangler.json --dry-run"
+  },
+  "engines": {
+    "node": ">=24"
   }
 }

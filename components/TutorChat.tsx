@@ -22,13 +22,19 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState("");
+  const streamingRef = useRef(false);
+  const loadVersion = useRef(0);
+  const [loading, setLoading] = useState(Boolean(initialConversations[0]?.id));
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const loadMessages = useCallback(async (id: number) => {
+    const version = ++loadVersion.current;
+    setLoading(true);
     setError("");
     try {
       const response = await fetch(`/api/conversations/${id}`, { cache: "no-store" });
       const data = (await response.json()) as { messages?: ChatMessage[]; error?: string };
+      if (version !== loadVersion.current) return;
       if (data.error) {
         setError(data.error);
         return;
@@ -39,13 +45,17 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
         ),
       );
     } catch {
-      setError("加载对话失败");
+      if (version === loadVersion.current) setError("加载对话失败");
+    } finally {
+      if (version === loadVersion.current) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
+    if (streamingRef.current) return;
     if (activeId) void loadMessages(activeId);
-    else setMessages([]);
+    else { setMessages([]); setLoading(false); }
+    return () => { loadVersion.current += 1; };
   }, [activeId, loadMessages]);
 
   useEffect(() => {
@@ -61,7 +71,9 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
 
   async function send() {
     const text = input.trim();
-    if (!text || streaming) return;
+    if (!text || streamingRef.current || loading) return;
+    streamingRef.current = true;
+    loadVersion.current += 1;
 
     setInput("");
     setError("");
@@ -129,12 +141,14 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
       setError(sendError instanceof Error ? sendError.message : "发送失败");
       setMessages((current) => current.filter((message) => message.role !== "assistant" || message.content));
     } finally {
+      streamingRef.current = false;
       setStreaming(false);
-      void refreshConversations();
+      void refreshConversations().catch(() => setError("刷新对话列表失败"));
     }
   }
 
   async function removeConversation(id: number) {
+    if (streamingRef.current) return;
     if (!window.confirm("确定删除这个对话吗？")) return;
     await fetch(`/api/conversations/${id}`, { method: "DELETE" });
     if (activeId === id) setActiveId(null);
@@ -147,6 +161,7 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
         <button
           type="button"
           className="btn-primary w-full"
+          disabled={streaming}
           onClick={() => {
             setActiveId(null);
             setMessages([]);
@@ -169,7 +184,8 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
                 <button
                   type="button"
                   className="min-w-0 flex-1 truncate text-left"
-                  onClick={() => setActiveId(conversation.id)}
+                  disabled={streaming}
+                  onClick={() => { if (activeId !== conversation.id) { setLoading(true); setActiveId(conversation.id); } }}
                   title={conversation.title}
                 >
                   {conversation.title}
@@ -177,6 +193,7 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
                 <button
                   type="button"
                   className="shrink-0 rounded px-1 text-xs text-slate-400 opacity-0 transition group-hover:opacity-100 hover:text-red-500"
+                  disabled={streaming}
                   onClick={() => void removeConversation(conversation.id)}
                   title="删除对话"
                 >
@@ -240,7 +257,7 @@ export function TutorChat({ initialConversations }: { initialConversations: Conv
             }}
             disabled={streaming}
           />
-          <button type="button" className="btn-primary" onClick={() => void send()} disabled={streaming || !input.trim()}>
+          <button type="button" className="btn-primary" onClick={() => void send()} disabled={streaming || loading || !input.trim()}>
             {streaming ? "生成中…" : "发送"}
           </button>
         </div>

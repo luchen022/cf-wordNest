@@ -2,6 +2,7 @@ node_modules
 .env*
 .dev.vars
 .dev.vars.*
+!.dev.vars.example
 .next
 next-env.d.ts
 *.tsbuildinfo

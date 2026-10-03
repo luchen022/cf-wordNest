@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { getCurrentUser } from "@/lib/auth";
 import { getDb, type WordRow } from "@/lib/db";
 import { getOwnedList } from "@/lib/lists";
-import { asId, asString, parseDefinitions, type DefinitionInput } from "@/lib/validate";
+import { asId, asString, parseDefinitions } from "@/lib/validate";
 
 export interface WordActionResult {
   ok: boolean;
@@ -27,29 +27,6 @@ async function ownedWord(userId: number, wordId: number): Promise<WordRow | null
 function revalidateWordViews() {
   revalidatePath("/");
   revalidatePath("/words");
-}
-
-async function replaceDefinitions(wordId: number, definitions: DefinitionInput[]): Promise<void> {
-  const db = await getDb();
-  await db.prepare("DELETE FROM definitions WHERE word_id = ?").bind(wordId).run();
-  if (definitions.length === 0) return;
-
-  const statements = definitions.map((definition, index) =>
-    db
-      .prepare(
-        `INSERT INTO definitions (word_id, part_of_speech, meaning, example, note, sort_order)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-      )
-      .bind(
-        wordId,
-        definition.part_of_speech,
-        definition.meaning,
-        definition.example,
-        definition.note,
-        index,
-      ),
-  );
-  await db.batch(statements);
 }
 
 export async function saveWordAction(input: {
@@ -82,26 +59,34 @@ export async function saveWordAction(input: {
     const existing = await ownedWord(user.id, existingId);
     if (!existing) return { ok: false, error: "单词不存在" };
     if (clash && clash.id !== existingId) return { ok: false, error: "该单词已存在" };
-
-    await db.batch([
-      db.prepare("UPDATE words SET word = ?, list_id = ? WHERE id = ?").bind(text, listId, existingId),
-    ]);
-    await replaceDefinitions(existingId, definitions);
-    revalidateWordViews();
-    return { ok: true, wordId: existingId };
+  } else if (clash) {
+    return { ok: false, error: "该单词已存在" };
   }
 
-  if (clash) return { ok: false, error: "该单词已存在" };
-
-  const inserted = await db
-    .prepare("INSERT INTO words (list_id, word, marked) VALUES (?, ?, 0)")
-    .bind(listId, text)
-    .run();
-  const wordId = Number(inserted.meta.last_row_id);
-  await replaceDefinitions(wordId, definitions);
-
-  revalidateWordViews();
-  return { ok: true, wordId };
+  // Resolve the new word ID inside SQL so the entire save is one transaction.
+  const statements = existingId
+    ? [
+        db.prepare("UPDATE words SET word = ?, list_id = ? WHERE id = ?").bind(text, listId, existingId),
+        db.prepare("DELETE FROM definitions WHERE word_id = ?").bind(existingId),
+        db.prepare("DELETE FROM word_relations WHERE word_id = ?").bind(existingId),
+      ]
+    : [db.prepare("INSERT INTO words (list_id, word, marked) VALUES (?, ?, 0)").bind(listId, text)];
+  for (const [index, definition] of definitions.entries()) {
+    statements.push(db.prepare(
+      `INSERT INTO definitions (word_id, part_of_speech, meaning, example, note, sort_order)
+       SELECT id, ?, ?, ?, ?, ? FROM words WHERE list_id = ? AND word = ?`,
+    ).bind(definition.part_of_speech, definition.meaning, definition.example, definition.note, index, listId, text));
+  }
+  statements.push(db.prepare("SELECT id FROM words WHERE list_id = ? AND word = ?").bind(listId, text));
+  try {
+    const results = await db.batch<{ id: number }>(statements);
+    const wordId = results[results.length - 1].results[0].id;
+    revalidateWordViews();
+    return { ok: true, wordId };
+  } catch (error) {
+    console.error(JSON.stringify({ message: "word save failed", error: String(error) }));
+    return { ok: false, error: "保存失败，请重试；该单词可能已存在" };
+  }
 }
 
 export async function deleteWordAction(wordId: number): Promise<WordActionResult> {

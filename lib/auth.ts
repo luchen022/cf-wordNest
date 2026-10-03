@@ -121,55 +121,46 @@ export function authConfigured(): boolean {
   return Boolean(env.SESSION_SECRET);
 }
 
+async function sessionSignature(payload: string, user: UserRow): Promise<Uint8Array> {
+  // Binding to the current password hash revokes every session on password reset.
+  return new Uint8Array(await crypto.subtle.sign(
+    "HMAC", await hmacKey(sessionSecret()),
+    new TextEncoder().encode(`${payload}.${user.password_hash}`),
+  ));
+}
+
 export async function createSessionToken(userId: number): Promise<string> {
-  const issuedAt = Date.now();
-  const payload = `${userId}.${issuedAt}`;
-  const signature = new Uint8Array(
-    await crypto.subtle.sign("HMAC", await hmacKey(sessionSecret()), new TextEncoder().encode(payload)),
-  );
-  return `${payload}.${b64url(signature)}`;
+  const user = await (await getDb()).prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
+  if (!user || user.status !== "active") throw new Error("账号不可用");
+  const payload = `v2.${userId}.${Date.now()}`;
+  return `${payload}.${b64url(await sessionSignature(payload, user))}`;
+}
+
+async function sessionUser(token: string): Promise<UserRow | null> {
+  if (!authConfigured()) return null;
+  const parts = token.split(".");
+  if (parts.length !== 4 || parts[0] !== "v2") return null;
+  const [, idPart, issuedPart, signaturePart] = parts;
+  const userId = Number(idPart);
+  const issuedAt = Number(issuedPart);
+  if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isFinite(issuedAt) ||
+      issuedAt > Date.now() || Date.now() - issuedAt > SESSION_TTL_MS) return null;
+  let provided: Bytes;
+  try { provided = fromB64url(signaturePart); } catch { return null; }
+  const user = await (await getDb()).prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
+  if (!user || user.status !== "active") return null;
+  const expected = await sessionSignature(parts.slice(0, 3).join("."), user);
+  return timingSafeEqual(expected, provided) ? user : null;
 }
 
 export async function verifySessionToken(token: string): Promise<number | null> {
-  if (!authConfigured()) return null;
-
-  const parts = token.split(".");
-  if (parts.length !== 3) return null;
-  const [idPart, issuedPart, signaturePart] = parts;
-  const payload = `${idPart}.${issuedPart}`;
-
-  let provided: Bytes;
-  try {
-    provided = fromB64url(signaturePart);
-  } catch {
-    return null;
-  }
-
-  const expected = new Uint8Array(
-    await crypto.subtle.sign("HMAC", await hmacKey(sessionSecret()), new TextEncoder().encode(payload)),
-  );
-  if (!timingSafeEqual(expected, provided)) return null;
-
-  const issuedAt = Number(issuedPart);
-  if (!Number.isFinite(issuedAt) || Date.now() - issuedAt > SESSION_TTL_MS) return null;
-
-  const userId = Number(idPart);
-  return Number.isInteger(userId) && userId > 0 ? userId : null;
+  return (await sessionUser(token))?.id ?? null;
 }
 
 export async function getCurrentUser(): Promise<UserRow | null> {
   if (!authConfigured()) return null;
-
-  const store = await cookies();
-  const token = store.get(COOKIE_NAME)?.value;
-  if (!token) return null;
-
-  const userId = await verifySessionToken(token);
-  if (userId === null) return null;
-
-  const user = await (await getDb()).prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
-  if (!user || user.status !== "active") return null;
-  return user;
+  const token = (await cookies()).get(COOKIE_NAME)?.value;
+  return token ? sessionUser(token) : null;
 }
 
 /** Server-component guard: redirects to /login when there is no valid session. */

@@ -35,7 +35,11 @@ export async function POST(request: NextRequest) {
   const user = await getCurrentUser();
   if (!user) return Response.json({ error: "未登录" }, { status: 401 });
 
-  const config = await getAiConfig(user.id);
+  let config;
+  try { config = await getAiConfig(user.id); }
+  catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "读取 AI 配置失败" }, { status: 400 });
+  }
   if (!config) {
     return Response.json({ error: "请先在设置中配置你自己的模型接口（Base URL / 模型 / API Key）" }, { status: 400 });
   }

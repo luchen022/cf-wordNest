@@ -15,7 +15,7 @@ export async function ensureUserBootstrap(user: UserRow): Promise<ListRow> {
     .first<ListRow>();
 
   if (!list) {
-    await db.prepare("INSERT INTO lists (user_id, name) VALUES (?, ?)").bind(user.id, DEFAULT_LIST_NAME).run();
+    await db.prepare("INSERT OR IGNORE INTO lists (user_id, name) VALUES (?, ?)").bind(user.id, DEFAULT_LIST_NAME).run();
     list = await db
       .prepare("SELECT * FROM lists WHERE user_id = ? ORDER BY id ASC LIMIT 1")
       .bind(user.id)
@@ -31,7 +31,7 @@ export async function ensureUserBootstrap(user: UserRow): Promise<ListRow> {
 
   if (!prefs) {
     await db
-      .prepare("INSERT INTO user_prefs (user_id, current_list_id, marked_only) VALUES (?, ?, 0)")
+      .prepare("INSERT OR IGNORE INTO user_prefs (user_id, current_list_id, marked_only) VALUES (?, ?, 0)")
       .bind(user.id, list.id)
       .run();
   } else if (prefs.current_list_id !== list.id) {

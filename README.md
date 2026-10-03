@@ -27,7 +27,7 @@
 
 ## 本地开发
 
-只有在需要改代码时才需要本地环境（要求 Node.js 20+）。日常部署不需要本地做任何事。
+只有在需要改代码时才需要本地环境（要求 Node.js 24+）。日常部署不需要本地做任何事。
 
 ```bash
 npm install
@@ -49,45 +49,89 @@ npm run start                    # http://localhost:8787
 > 而构建产物在 `dist/server/`。`npm run start` 已经用绝对路径把两个命令的本地 D1
 > 指向同一处（`.wrangler/state`），请勿去掉该参数，否则会出现「表不存在」的错误。
 
-## 部署：在 Cloudflare 连接 GitHub 即可
+## 部署：GitHub → Cloudflare Workers → 自动更新
 
-这个项目就是按"连上仓库就能跑"来配置的：**不需要在本地克隆、建库或执行任何迁移命令**。
-数据库会在首次部署时自动创建，表结构由应用在第一次收到请求时建好。
+这个项目使用 **Workers Builds** 连接 GitHub。第一次配置完成后，推送到生产分支就会自动构建和部署；无需本地登录 Cloudflare、执行建库命令或手动迁移。
 
-1. 把仓库推送到 GitHub。
-2. Cloudflare 控制台 → **Workers & Pages → Create application → Import a repository**，
-   选中该仓库。
-3. 按下表填写构建配置：
+### 1. 连接 GitHub 仓库
 
-| 字段 | 填入 |
+把代码上传到 GitHub，在 Cloudflare 控制台进入 **Workers & Pages → Create application → Import a repository**，授权并选择仓库，填写：
+
+| 配置项 | 值 |
 | --- | --- |
-| Worker name | `wordnest-cloudflare`（**必须**与 `wrangler.jsonc` 里的 `name` 完全一致，否则构建会失败） |
-| Git branch | `main` |
+| Worker name | `wordnest-cloudflare`，与 `wrangler.jsonc` 的 `name` 一致 |
+| Production branch | `main`，或你实际使用的生产分支 |
 | Build command | `npm run build` |
 | Deploy command | `npm run deploy:ci` |
-| Non-production deploy command | `npm run deploy:preview`（只在你启用「非生产分支构建」时才需要改） |
-| Root directory | 留空 |
-| Build variables / secrets | 不需要（构建期变量在运行时不可见，别把 `SESSION_SECRET` 放这里） |
+| Root directory | 仓库根目录，留空 |
+| Build variables / secrets | 无需填写 `SESSION_SECRET`，它是运行时密钥 |
+| Node.js | 仓库中的 `.node-version` 已指定为 `24` |
 
-4. **Save and Deploy**。首次部署会自动创建并绑定 D1 数据库（`wrangler.jsonc` 中刻意没写
-   `database_id`，交给 Cloudflare 自动配置）。
-5. 部署完成后添加运行时密钥：**该 Worker → Settings → Variables and Secrets → 添加
-   `SESSION_SECRET`**，类型选 **Secret**，值用 `openssl rand -hex 32` 生成的随机串。
-   在没有设置它之前，站点会显示一条明确的配置提示，而不是报错。
-6. 打开 Worker 的 `*.workers.dev` 地址，创建第一个管理员账号，即可开始使用。
+保留自动部署生产分支的设置。初次部署可以先完成，尚未配置 `SESSION_SECRET` 时应用会显示配置提示。
 
-之后每次 push 到 `main`，Cloudflare 都会自动重新构建并部署。
+部署必须使用生成的 `dist/server/wrangler.json`，`deploy:ci` 已明确指定它。不要直接部署开发入口，也不要把部署命令换成其他框架的适配器命令。
 
-> **部署命令为什么要带 `--config`**：根目录 `wrangler.jsonc` 里的 `main` 指向 vinext 的
-> 开发入口，用默认的 `npx wrangler deploy` 会部署出一个空壳 Worker。`npm run deploy:ci`
-> 已经是 `wrangler deploy --config dist/server/wrangler.json`，请不要改成裸的 `npx wrangler deploy`。
+### 2. 在控制台选择 D1 数据库，无需填写 ID
 
-### 可选：本地手动部署
+代码只声明数据库绑定名：
+
+```json
+"d1_databases": [{ "binding": "DB" }]
+```
+
+进入 **该 Worker → Bindings → Add binding → D1 database**：
+
+- Variable name 必须填 **`DB`**，大小写一致。
+- 从下拉框选择你创建的 D1 数据库。数据库名称可以自定义。
+- 保存并部署绑定变更。
+
+如果 Worker 已有 `DB` 绑定，后续 GitHub 自动部署会沿用这个绑定。仓库没有固定数据库名称或 ID，不需要把控制台的数据库 ID 复制回代码。
+
+也可以让 Wrangler 在首次部署时自动创建 D1：没有已有 `DB` 绑定时，自动配置通常会使用 `wordnest-cloudflare-DB` 作为数据库名称。这个方式要求构建部署令牌具备 **D1 编辑权限**。如果构建日志提示无权查询或创建 D1，请在控制台给构建令牌补充权限，或先在控制台创建数据库并绑定为 `DB`，再重试部署。
+
+应用在首次访问数据库时自动创建表；以后沿用同一个数据库，常规代码更新不会重建数据库或清空词表。
+
+> 如果已经使用过这个项目，选择当前保存数据的数据库。切换到一个新的空数据库会看到全新的初始化页面，旧数据仍在原数据库中。
+
+### 3. 配置运行时密钥
+
+进入 **该 Worker → Settings → Variables and Secrets → Add**：
+
+| 名称 | 类型 | 值 |
+| --- | --- | --- |
+| `SESSION_SECRET` | Secret | 安全随机生成的至少 32 字节密钥，例如 64 位十六进制字符串 |
+
+保存并部署密钥变更，刷新站点，创建首位管理员账号。不要把它放在 **Build Variables and Secrets**，构建期变量不会自动变成运行时密钥；不要把真实密钥提交到 GitHub。
+
+每位用户的 AI Base URL、模型和 API Key 在站点「设置」里填写，无需统一配置到 Cloudflare。
+
+仓库已设置 `keep_vars: true`，后续部署会保留控制台添加的普通运行时变量；Wrangler 默认也会保留已设置的 Secret。请保持 `SESSION_SECRET` 稳定，它还用于加密用户 AI Key。
+
+### 4. 后续更新
+
+更新代码并推送到选定的生产分支后，Cloudflare 会自动拉取仓库、安装依赖、构建并部署。无需再次填写数据库 ID、重新绑定数据库或重复设置密钥。
+
+在 **Worker → Builds** 查看每次构建状态和失败日志，在 **Deployments** 查看生产部署版本。
+
+建议初期只启用生产分支构建。现有 `npm run deploy:preview` 使用 `wrangler versions upload`，是版本预览，沿用 Worker 的数据库绑定，并不创建隔离的测试数据库。如果需要测试环境，应另建 Worker/D1 后再启用。
+
+### 可选：本地手动部署与验证
 
 ```bash
 npx wrangler login
-npm run deploy         # 构建并部署
+npm run deploy          # 先构建，再部署生成的 Worker
 ```
+
+只检查构建和打包、不部署：
+
+```bash
+npm run build
+npm run deploy:check
+```
+
+检查不代表账号权限、线上 D1 绑定和运行时 Secret 已配置正确。
+
+相关官方说明：[Workers Builds 配置](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/)、[自动创建资源](https://developers.cloudflare.com/workers/wrangler/configuration/#automatic-provisioning)、[控制台绑定 D1](https://developers.cloudflare.com/d1/get-started/#3-bind-your-worker-to-your-d1-database)。
 
 ## 脚本
 
@@ -100,6 +144,9 @@ npm run deploy         # 构建并部署
 | `npm run deploy:ci` | 仅部署构建产物（Workers Builds 的 Deploy command 用这个） |
 | `npm run deploy:preview` | 上传预览版本（非生产分支用） |
 | `npm run typecheck` | TypeScript 类型检查 |
+| `npm run types` | 根据 Wrangler 配置生成绑定类型 |
+| `npm run deploy:check` | 检查构建产物打包，不部署到线上 |
+| `npm test` | 回归测试 |
 
 ## 目录结构
 
@@ -125,3 +172,11 @@ lib/                数据访问、认证、AI 客户端、校验
 - 预览部署（非生产分支）与生产环境共用同一个 D1 绑定，会读写同一份数据；如需隔离，可另建数据库并用 `wrangler` 的 `env` 配置分开。
 - 表结构由应用自动创建（见 `lib/schema.ts`），改动 schema 时在数组末尾追加一个新版本即可，已有部署会就地升级。
 - 不含原 Flask 版本的历史数据；如需导入旧 `instance/*.db`，需要另写一次导入脚本。
+
+## 安全修复与升级说明
+
+- 会话签名绑定当前密码哈希，管理员重置密码后，旧登录会立即失效。升级到此版本后，已有用户需要重新登录一次。
+- AI Base URL 必须使用 HTTPS，支持自定义路径和完整 `/chat/completions` 地址；不接受内嵌账号、查询参数或片段，也不跟随重定向。普通请求超时为 60 秒，流式请求为 180 秒。
+- AI Key 使用 AES-GCM 加密后存入 D1，加密密钥由 `SESSION_SECRET` 派生，密文绑定用户 ID。历史明文密钥在读取或保存设置时自动升级。
+- 请妥善备份 `SESSION_SECRET`。更换它会使所有会话失效，已有加密 AI Key 也将无法解密，需要用户重新填写；更换前应规划密钥重新录入。
+- `npm test`（需要 Node.js 22.13+ 或 24）执行回归测试，覆盖会话撤销、初始化竞争、保存回滚、密钥保护和 AI 地址校验。数据库测试使用 SQLite，不能替代部署环境的端到端验证。

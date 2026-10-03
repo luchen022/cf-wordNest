@@ -18,12 +18,12 @@ async function requireAdminUser(): Promise<{ admin: UserRow | null; error?: stri
   return { admin: user };
 }
 
-export async function getUsersAction(): Promise<UserRow[]> {
+export async function getUsersAction(): Promise<Array<Omit<UserRow, "password_hash">>> {
   const { admin } = await requireAdminUser();
   if (!admin) return [];
   const { results } = await (await getDb())
-    .prepare("SELECT * FROM users ORDER BY id ASC")
-    .all<UserRow>();
+    .prepare("SELECT id, username, role, status, created_at, updated_at FROM users ORDER BY id ASC")
+    .all<Omit<UserRow, "password_hash">>();
   return results;
 }
 
@@ -116,14 +116,16 @@ export async function resetUserPasswordAction(input: {
   const problem = passwordProblem(password);
   if (problem) return { ok: false, error: problem };
 
+  const target = await (await getDb()).prepare("SELECT id FROM users WHERE id = ?").bind(id).first<{ id: number }>();
+  if (!target) return { ok: false, error: "用户不存在" };
+
   const passwordHash = await hashPassword(password);
   await (await getDb())
     .prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
     .bind(passwordHash, id)
     .run();
 
-  // Any existing session stays valid until it expires, so force a fresh login.
-  await (await getDb()).prepare("DELETE FROM login_attempts WHERE key LIKE ?").bind(`%|%`).run();
+  // Sessions are bound to the password hash and are now invalid.
 
   revalidatePath("/admin");
   return { ok: true, message: "密码已重置" };

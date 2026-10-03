@@ -1,4 +1,5 @@
 import { getDb, type AiSettingsRow } from "./db";
+import { decryptCredential, encryptCredential, isEncryptedCredential } from "./credentials";
 
 export interface AiConfig {
   baseUrl: string;
@@ -16,10 +17,16 @@ export interface ChatMessage {
  * A full URL ending in /chat/completions is used as-is so any proxy shape works.
  */
 export function buildChatCompletionsUrl(baseUrl: string): string {
-  const url = (baseUrl || "").trim().replace(/\/+$/, "");
-  if (!url) throw new Error("Base URL 未配置");
-  if (url.endsWith("/chat/completions")) return url;
-  return `${url}/chat/completions`;
+  const value = baseUrl.trim();
+  if (!value) throw new Error("Base URL 未配置");
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error("Base URL 必须是合法的 HTTPS 地址"); }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new Error("Base URL 必须使用 HTTPS，且不能包含账号、查询参数或片段");
+  }
+  url.pathname = url.pathname.replace(/\/+$/, "");
+  if (!url.pathname.endsWith("/chat/completions")) url.pathname += "/chat/completions";
+  return url.toString();
 }
 
 export async function getAiConfig(userId: number): Promise<AiConfig | null> {
@@ -29,7 +36,13 @@ export async function getAiConfig(userId: number): Promise<AiConfig | null> {
     .first<AiSettingsRow>();
 
   if (!row || !row.base_url || !row.model) return null;
-  return { baseUrl: row.base_url, model: row.model, apiKey: row.api_key };
+  const apiKey = await decryptCredential(row.api_key, userId);
+  if (row.api_key && !isEncryptedCredential(row.api_key)) {
+    // Compare-and-set preserves credentials changed by a concurrent settings save.
+    await (await getDb()).prepare("UPDATE user_ai_settings SET api_key = ? WHERE user_id = ? AND api_key = ?")
+      .bind(await encryptCredential(apiKey, userId), userId, row.api_key).run();
+  }
+  return { baseUrl: row.base_url, model: row.model, apiKey };
 }
 
 function headers(config: AiConfig): HeadersInit {
@@ -66,7 +79,10 @@ export async function chatCompletion(
     method: "POST",
     headers: headers(config),
     body: JSON.stringify(body),
-    signal: options.signal,
+    signal: options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(60_000)])
+      : AbortSignal.timeout(60_000),
+    redirect: "error",
   });
 
   if (!response.ok) {
@@ -97,7 +113,10 @@ export async function chatCompletionStream(
       temperature: options.temperature ?? 0.3,
       stream: true,
     }),
-    signal: options.signal,
+    signal: options.signal
+      ? AbortSignal.any([options.signal, AbortSignal.timeout(180_000)])
+      : AbortSignal.timeout(180_000),
+    redirect: "error",
   });
 
   if (!response.ok || !response.body) {

@@ -107,10 +107,13 @@ export async function registerAction(_prev: AuthState, formData: FormData): Prom
     const db = await getDb();
     const passwordHash = await hashPassword(password);
     const inserted = await db
-      .prepare("INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')")
+      .prepare("INSERT INTO users (username, password_hash, role) SELECT ?, ?, 'admin' WHERE NOT EXISTS (SELECT 1 FROM users)")
       .bind(username, passwordHash)
       .run();
 
+    if (inserted.meta.changes === 0) {
+      return { error: "系统已初始化，请让管理员在后台为你创建账号" };
+    }
     const userId = Number(inserted.meta.last_row_id);
     const user = await db.prepare("SELECT * FROM users WHERE id = ?").bind(userId).first<UserRow>();
     if (user) await ensureUserBootstrap(user);
